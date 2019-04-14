@@ -161,7 +161,7 @@ void StereoMatch::run()
  */
 void StereoMatch::Save()
 {
-	if (!Raw_Disp_Data.empty() && !Gray_Disp_Data.empty())
+	if (!Raw_Disp_Data.empty() && !Visual_Disp_Data.empty())
 	{
 		try
 		{
@@ -174,7 +174,7 @@ void StereoMatch::Save()
 			 * 例如归一化到0~255会改变原始的视差数据,因此,测量时必须使用原始视差数据
 			 */
 			 //获取灰度视差图并保存
-			cv::imwrite(disparity_filename, Gray_Disp_Data);
+			cv::imwrite(disparity_filename, Visual_Disp_Data);
 			std::cout << "已经保存视差示意图:" << disparity_filename << std::endl;
 
 //			//保存pcd点云
@@ -240,9 +240,10 @@ void StereoMatch::ADCensusDriver()
 				 * 例如归一化到0~255会改变原始的视差数据,因此,测量时必须使用原始视差数据
 				 */
 
-				Gray_Disp_Data = sP.getGrayDisparity();
+				Visual_Disp_Data = sP.getGrayDisparity();
+				//cv::normalize(Visual_Disp_Data, Visual_Disp_Data, 0, 255, cv::NORM_MINMAX);
 				//界面显示灰度视差图
-				m_entity->setIconRawDisp(Gray_Disp_Data);
+				m_entity->setIconRawDisp(Visual_Disp_Data);
 			}
 			else
 			{
@@ -271,25 +272,32 @@ void StereoMatch::OpenCVBM()
 	cv::Ptr<cv::StereoBM> bm = cv::StereoBM::create();
 	//bm->setROI1(roi1);
 	//bm->setROI2(roi2);
-	bm->setPreFilterCap(m_entity->getPrefilcap());
-	bm->setBlockSize(m_entity->getSadWinsz());
-	bm->setMinDisparity(m_entity->getMinDisp());
-	bm->setNumDisparities(m_entity->getNumDisparities());
-	bm->setTextureThreshold(m_entity->getTextThread());
-	bm->setUniquenessRatio(m_entity->getUniradio());
-	bm->setSpeckleWindowSize(m_entity->getSpecwinsz());
-	bm->setSpeckleRange(m_entity->getSpecrange());
-	bm->setDisp12MaxDiff(m_entity->getMaxdifdisp12());
+	if (m_entity->getBM_preFilterType_XSOBEL()==true)
+	{
+		bm->setPreFilterType(cv::StereoBM::PREFILTER_XSOBEL);
+	}
+	else
+	{
+		bm->setPreFilterType(cv::StereoBM::PREFILTER_NORMALIZED_RESPONSE);
+	}
+	bm->setPreFilterSize(m_entity->getBM_preFilterSize());
+	bm->setPreFilterCap(m_entity->getBM_preFilterCap());
+	bm->setBlockSize(m_entity->getBM_SADWindowSize());//bm算法的BlockSize就是SADWindowSize
+	bm->setMinDisparity(m_entity->getBM_minDisparity());
+	bm->setNumDisparities(m_entity->getBM_numDisparities());
+	bm->setTextureThreshold(m_entity->getBM_textureThreshold());
+	bm->setUniquenessRatio(m_entity->getBM_uniquenessRatio());
+	bm->setSpeckleRange(m_entity->getBM_speckleRange());
+	bm->setSpeckleWindowSize(m_entity->getBM_speckleWindowSize());
+	bm->setDisp12MaxDiff(m_entity->getBM_disp12MaxDiff());
 	int64 t = cv::getTickCount();
 	bm->compute(img1G, img2G, Raw_Disp_Data);
-
+	Raw_Disp_Data.convertTo(Raw_Disp_Data, CV_8U, 1 / 16.);
 	//获取用于显示的视差示意图
-	//EvisionUtils::getGrayDisparity<UINT8>(Raw_Disp_Data, Gray_Disp_Data,true);
-	Raw_Disp_Data.convertTo(Gray_Disp_Data, CV_8UC3);
-	m_entity->setIconRawDisp(Gray_Disp_Data);
+	cv::normalize(Raw_Disp_Data, Visual_Disp_Data, 0, 255, CV_MINMAX);
+	m_entity->setIconRawDisp(Visual_Disp_Data);
 
 	t = cv::getTickCount() - t;
-
 	std::cout << "Time elapsed: " << t * 1000 / cv::getTickFrequency() << "ms\n BM计算完毕" << std::endl;
 }
 /*
@@ -300,36 +308,39 @@ void StereoMatch::OpenCVSGBM()
 	std::cout << "SGBM 开始计算..." << std::endl;
 	m_entity->setIconImgL(img1);
 	m_entity->setIconImgR(img2);
+
 	cv::Ptr<cv::StereoSGBM> sgbm = cv::StereoSGBM::create(0, 16, 3);
 
-	sgbm->setPreFilterCap(m_entity->getPrefilcap());
-	sgbm->setBlockSize(m_entity->getSadWinsz());
-	int cn = img1.channels();
-	sgbm->setP1(8 * cn*m_entity->getSadWinsz()*m_entity->getSadWinsz());
-	sgbm->setP2(32 * cn*m_entity->getSadWinsz()*m_entity->getSadWinsz());
-	sgbm->setMinDisparity(m_entity->getMinDisp());
-	sgbm->setNumDisparities(m_entity->getNumDisparities());
-	sgbm->setUniquenessRatio(m_entity->getUniradio());
-	sgbm->setSpeckleWindowSize(m_entity->getSpecwinsz());
-	sgbm->setSpeckleRange(m_entity->getSpecrange());
-	sgbm->setDisp12MaxDiff(m_entity->getMaxdifdisp12());
-	if (m_entity->getMODE_HH())
-		sgbm->setMode(cv::StereoSGBM::MODE_HH);
-	else if (m_entity->getMODE_SGBM())
-		sgbm->setMode(cv::StereoSGBM::MODE_SGBM);
-	else if (m_entity->getMODE_3WAY())
+	sgbm->setMinDisparity(m_entity->getSGBM_minDisparity());
+	sgbm->setNumDisparities(m_entity->getSGBM_numDisparities());
+	sgbm->setBlockSize(m_entity->getSGBM_blockSize());
+
+	int delta = img1.channels()*m_entity->getSGBM_blockSize()*m_entity->getSGBM_blockSize();
+	sgbm->setP1((m_entity->getSGBM_P1() < m_entity->getSGBM_P2() ? m_entity->getSGBM_P1()* delta : 8 * delta));
+	sgbm->setP2((m_entity->getSGBM_P1() < m_entity->getSGBM_P2() ? m_entity->getSGBM_P2()* delta : 32 * delta));
+
+	sgbm->setDisp12MaxDiff(m_entity->getSGBM_disp12MaxDiff());
+	sgbm->setPreFilterCap(m_entity->getSGBM_preFilterCap());
+	sgbm->setUniquenessRatio(m_entity->getSGBM_uniquenessRatio());
+	sgbm->setSpeckleWindowSize(m_entity->getSGBM_speckleWindowSize());
+	sgbm->setSpeckleRange(m_entity->getSGBM_speckleRange());
+
+	if (m_entity->getSGBM_MODEL_HH4())
+		sgbm->setMode(cv::StereoSGBM::MODE_HH4);
+	else if (m_entity->getSGBM_MODEL_3WAY())
 		sgbm->setMode(cv::StereoSGBM::MODE_SGBM_3WAY);
+	else if (m_entity->getSGBM_MODEL_Default())
+		sgbm->setMode(cv::StereoSGBM::MODE_SGBM);
+	else 
+		sgbm->setMode(cv::StereoSGBM::MODE_HH);
 
 	int64 t = cv::getTickCount();
 	sgbm->compute(img1, img2, Raw_Disp_Data);
-	
+	Raw_Disp_Data.convertTo(Raw_Disp_Data, CV_8U, 1 / 16.);
 
 	//获取用于显示的视差示意图
-	Raw_Disp_Data.convertTo(Gray_Disp_Data, CV_8U, 1 / 16.);
-	//cvNormalize(&Raw_Disp_Data, &Gray_Disp_Data, 0, 256, CV_MINMAX);
-	//cv::imshow("Raw_Disp_Data", Raw_Disp_Data);
-	//cv::normalize(Raw_Disp_Data, Gray_Disp_Data);
-	m_entity->setIconRawDisp(Gray_Disp_Data);
+	cv::normalize(Raw_Disp_Data, Visual_Disp_Data, 0, 255, CV_MINMAX);
+	m_entity->setIconRawDisp(Visual_Disp_Data);
 
 	t = cv::getTickCount() - t;
 	std::cout << "Time elapsed: " << t * 1000 / cv::getTickFrequency() << "ms\n SGBM计算完毕" << std::endl;
@@ -368,12 +379,10 @@ void StereoMatch::Elas()
 	param.postprocess_only_left = m_entity->getPostprocessOnlyLeft();
 	param.subsampling = m_entity->getSubSampling();
 
-	cv::Mat *rawlr=new cv::Mat, *rawrl = new cv::Mat, *seelr = new cv::Mat, *seerl = new cv::Mat;
-	ElasMatch(img1, img2, param, rawlr, rawrl, seelr, seerl);
-
-	rawlr->copyTo(Raw_Disp_Data);
-
-	seelr->copyTo(Gray_Disp_Data);
-	m_entity->setIconRawDisp(Gray_Disp_Data);
+	int64 t = cv::getTickCount();
+	ElasMatch(param,img1, img2,&Raw_Disp_Data, &Visual_Disp_Data);
+	t = cv::getTickCount() - t;
+	std::cout << "Time elapsed: " << t * 1000 / cv::getTickFrequency() << "ms\n ELAS计算完毕" << std::endl;
+	m_entity->setIconRawDisp(Visual_Disp_Data);
 
 }
